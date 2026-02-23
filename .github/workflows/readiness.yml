@@ -1,0 +1,278 @@
+name: Merge Readiness
+
+on:
+  workflow_call:
+    inputs:
+      bump-map:
+        description: 'JSON mapping branch prefix to bump type (minor/patch)'
+        type: string
+        default: '{"feature":"minor","feat":"minor","fix":"patch"}'
+      version-file:
+        description: 'Path to file containing version'
+        type: string
+        default: 'Directory.Build.props'
+      version-xpath:
+        description: 'XML element name holding the version'
+        type: string
+        default: 'VersionPrefix'
+      pr-number:
+        description: 'PR number to check'
+        type: number
+        required: true
+      pr-sha:
+        description: 'Head SHA of the PR'
+        type: string
+        required: true
+    secrets:
+      app-id:
+        required: true
+      private-key:
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    steps:
+      # ── Step 1: Generate App token ──────────────────────────────────
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.app-id }}
+          private-key: ${{ secrets.private-key }}
+
+      # ── Step 2: Get PR details ──────────────────────────────────────
+      - name: Get PR details
+        id: pr-info
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const prNumber = ${{ inputs.pr-number }};
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            core.setOutput('draft', pr.draft);
+            core.setOutput('mergeable', pr.mergeable);
+            core.setOutput('branch', pr.head.ref);
+            core.setOutput('title', pr.title);
+
+      # ── Step 3: Check CI status ────────────────────────────────────
+      - name: Check CI status
+        id: ci-status
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const sha = '${{ inputs.pr-sha }}';
+
+            const { data: status } = await github.rest.repos.getCombinedStatusForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha
+            });
+
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha
+            });
+
+            const results = [];
+            let allPassing = true;
+            let hasPending = false;
+
+            for (const s of status.statuses) {
+              const pass = s.state === 'success' || s.state === 'neutral';
+              const pending = s.state === 'pending';
+              if (!pass) allPassing = false;
+              if (pending) hasPending = true;
+              results.push({ name: s.context, status: s.state, pass, pending });
+            }
+
+            for (const check of checks.check_runs) {
+              if (check.name === 'merge' || check.name === 'readiness') continue;
+              const pending = check.status !== 'completed';
+              const pass = !pending && (check.conclusion === 'success' || check.conclusion === 'neutral' || check.conclusion === 'skipped');
+              if (!pass) allPassing = false;
+              if (pending) hasPending = true;
+              results.push({
+                name: check.name,
+                status: pending ? check.status : check.conclusion,
+                pass,
+                pending
+              });
+            }
+
+            core.setOutput('all-passing', allPassing && results.length > 0);
+            core.setOutput('has-pending', hasPending);
+            core.setOutput('no-checks', results.length === 0);
+            core.setOutput('results', JSON.stringify(results));
+
+      # ── Step 4: Determine bump preview ─────────────────────────────
+      - name: Determine bump preview
+        id: bump
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = '${{ steps.pr-info.outputs.branch }}';
+            const bumpMap = JSON.parse('${{ inputs.bump-map }}');
+            const prefix = branch.split('/')[0];
+            const bumpType = bumpMap[prefix] || 'none';
+
+            core.setOutput('type', bumpType);
+            core.setOutput('prefix', prefix);
+
+      # ── Step 5: Check version file ─────────────────────────────────
+      - name: Check version file
+        id: version
+        if: steps.bump.outputs.type != 'none'
+        uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ inputs.pr-sha }}
+          sparse-checkout: ${{ inputs.version-file }}
+
+      - name: Read version preview
+        id: version-info
+        if: steps.bump.outputs.type != 'none'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const versionFile = '${{ inputs.version-file }}';
+            const elementName = '${{ inputs.version-xpath }}';
+            const bumpType = '${{ steps.bump.outputs.type }}';
+
+            if (!fs.existsSync(versionFile)) {
+              core.setOutput('preview', 'CHANGELOG only (no version file)');
+              return;
+            }
+
+            const content = fs.readFileSync(versionFile, 'utf8');
+            const regex = new RegExp(`<${elementName}[^>]*>([^<]+)</${elementName}>`);
+            const match = content.match(regex);
+
+            if (!match) {
+              core.setOutput('preview', `Could not read version from ${versionFile}`);
+              return;
+            }
+
+            const current = match[1].trim();
+            const [major, minor, patch] = current.split('.').map(Number);
+            let next;
+            if (bumpType === 'minor') next = `${major}.${minor + 1}.0`;
+            else if (bumpType === 'patch') next = `${major}.${minor}.${patch + 1}`;
+            else next = current;
+
+            core.setOutput('preview', `${current} → ${next} (${bumpType})`);
+
+      # ── Step 6: Post or update sticky comment ──────────────────────
+      - name: Post readiness comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const prNumber = ${{ inputs.pr-number }};
+            const marker = '<!-- merge-readiness -->';
+
+            // Gather check results
+            const isDraft = ${{ steps.pr-info.outputs.draft }};
+            const mergeable = '${{ steps.pr-info.outputs.mergeable }}';
+            const ciAllPassing = ${{ steps.ci-status.outputs.all-passing }};
+            const ciHasPending = ${{ steps.ci-status.outputs.has-pending }};
+            const ciNoChecks = ${{ steps.ci-status.outputs.no-checks }};
+            const ciResults = JSON.parse('${{ steps.ci-status.outputs.results }}');
+            const bumpType = '${{ steps.bump.outputs.type }}';
+            const versionPreview = '${{ steps.version-info.outputs.preview }}';
+
+            // Build checklist
+            const checks = [];
+
+            // Draft status
+            if (isDraft) {
+              checks.push('- :yellow_circle: PR is a **draft** — mark as ready for review before merging');
+            } else {
+              checks.push('- :white_check_mark: PR is ready for review');
+            }
+
+            // Merge conflicts
+            if (mergeable === 'false') {
+              checks.push('- :red_circle: **Merge conflicts** — rebase or resolve conflicts');
+            } else if (mergeable === 'null' || mergeable === '') {
+              checks.push('- :yellow_circle: Merge status unknown (GitHub is still computing)');
+            } else {
+              checks.push('- :white_check_mark: No merge conflicts');
+            }
+
+            // CI checks
+            if (ciNoChecks) {
+              checks.push('- :white_circle: No CI checks configured');
+            } else if (ciAllPassing) {
+              checks.push('- :white_check_mark: All CI checks passing');
+            } else if (ciHasPending) {
+              const pendingNames = ciResults.filter(r => r.pending).map(r => r.name);
+              checks.push(`- :yellow_circle: CI checks pending: ${pendingNames.join(', ')}`);
+            } else {
+              const failingNames = ciResults.filter(r => !r.pass && !r.pending).map(r => `${r.name} (${r.status})`);
+              checks.push(`- :red_circle: **CI checks failing:** ${failingNames.join(', ')}`);
+            }
+
+            // Version/bump preview
+            if (bumpType === 'none') {
+              checks.push('- :white_circle: No version bump (branch prefix not in bump map)');
+            } else if (versionPreview) {
+              checks.push(`- :mag: **Version:** ${versionPreview}`);
+            }
+
+            // Overall status
+            const hasBlocker = isDraft || mergeable === 'false' || (!ciAllPassing && !ciNoChecks);
+            const status = hasBlocker ? ':warning: **Not ready to merge**' : ':rocket: **Ready to merge** — comment `/merge` to proceed';
+
+            const body = [
+              marker,
+              '## Merge Readiness',
+              '',
+              ...checks,
+              '',
+              `**Status:** ${status}`,
+              '',
+              `<sub>Updated ${new Date().toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC')}</sub>`
+            ].join('\n');
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body
+              });
+              core.info(`Updated readiness comment #${existing.id}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: body
+              });
+              core.info('Created readiness comment');
+            }
