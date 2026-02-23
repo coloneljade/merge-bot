@@ -8,6 +8,12 @@ concurrency:
   group: merge-${{ github.event.issue.number }}
   cancel-in-progress: false
 
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: read
+
 jobs:
   merge:
     if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/merge')

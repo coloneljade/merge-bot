@@ -99,7 +99,7 @@ Branches not in the map (e.g., `docs/`, `chore/`, `ci/`, `test/`, `style/`) get 
 
 ## CHANGELOG Generation
 
-The bot creates **versioned sections** (never `[Unreleased]`):
+When a version file exists, the bot creates **versioned sections**:
 
 ```markdown
 ## [1.2.0] - 2026-02-23
@@ -107,6 +107,8 @@ The bot creates **versioned sections** (never `[Unreleased]`):
 ### Added
 - Description from PR title (#5)
 ```
+
+When no version file exists, entries are appended to `## [Unreleased]` instead.
 
 PR title format `type(scope): description` maps to sections:
 
@@ -182,3 +184,5 @@ This ensures only the bot can push directly to `main`. Everyone else must go thr
 - **Major versions are never auto-bumped.** The bot only increments minor/patch within the current major version. Major bumps (e.g., `1.x.x` to `2.0.0`) are a manual process.
 - The bot reads the current version from the configured `version-file` and `version-xpath`, computes the bump, writes it back, and commits.
 - If no bump is needed (branch prefix not in map, or `--no-bump` flag), the bot skips CHANGELOG and version changes entirely.
+- If no version file exists, the bot still generates CHANGELOG entries under `[Unreleased]` but skips version bumping.
+- If no CHANGELOG file exists, the bot skips CHANGELOG generation entirely.
