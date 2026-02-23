@@ -1,0 +1,579 @@
+name: Merge Bot
+
+on:
+  workflow_call:
+    inputs:
+      bump-map:
+        description: 'JSON mapping branch prefix to bump type (minor/patch)'
+        type: string
+        default: '{"feature":"minor","feat":"minor","fix":"patch"}'
+      version-file:
+        description: 'Path to file containing version'
+        type: string
+        default: 'Directory.Build.props'
+      version-xpath:
+        description: 'XML element name holding the version'
+        type: string
+        default: 'VersionPrefix'
+      changelog-file:
+        description: 'Path to CHANGELOG file'
+        type: string
+        default: 'CHANGELOG.md'
+    secrets:
+      app-id:
+        required: true
+      private-key:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: read
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      # ── Step 1: Parse command and react ─────────────────────────────
+      - name: Parse command and acknowledge
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = context.payload.comment.body.trim();
+            const prNumber = context.payload.issue.number;
+
+            // React with rocket to acknowledge
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket'
+            });
+
+            // Parse flags
+            const args = comment.split(/\s+/).slice(1); // skip '/merge'
+            const flags = {
+              patch: args.includes('--patch'),
+              minor: args.includes('--minor'),
+              noBump: args.includes('--no-bump'),
+              noSquash: args.includes('--no-squash')
+            };
+
+            core.setOutput('pr-number', prNumber);
+            core.setOutput('flag-patch', flags.patch);
+            core.setOutput('flag-minor', flags.minor);
+            core.setOutput('flag-no-bump', flags.noBump);
+            core.setOutput('flag-no-squash', flags.noSquash);
+
+      # ── Step 2: Generate App token ──────────────────────────────────
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.app-id }}
+          private-key: ${{ secrets.private-key }}
+
+      # ── Step 3: Verify commenter permissions ────────────────────────
+      - name: Verify commenter has write access
+        id: auth
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { data: perm } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.payload.comment.user.login
+            });
+
+            const allowed = ['admin', 'write'];
+            if (!allowed.includes(perm.permission)) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ steps.parse.outputs.pr-number }},
+                body: `**Merge bot:** Permission denied. @${context.payload.comment.user.login} does not have write access.`
+              });
+              core.setFailed('Commenter lacks write permission');
+            }
+
+      # ── Step 4: Verify PR state ────────────────────────────────────
+      - name: Verify PR is mergeable
+        id: pr-info
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const prNumber = ${{ steps.parse.outputs.pr-number }};
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            // Check state
+            if (pr.state !== 'open') {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: '**Merge bot:** PR is not open.'
+              });
+              core.setFailed('PR is not open');
+              return;
+            }
+
+            if (pr.draft) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: '**Merge bot:** Cannot merge a draft PR. Mark it as ready for review first.'
+              });
+              core.setFailed('PR is a draft');
+              return;
+            }
+
+            // Check for merge conflicts
+            if (pr.mergeable === false) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: '**Merge bot:** PR has merge conflicts. Please rebase or resolve conflicts first.'
+              });
+              core.setFailed('PR has merge conflicts');
+              return;
+            }
+
+            core.setOutput('branch', pr.head.ref);
+            core.setOutput('base', pr.base.ref);
+            core.setOutput('sha', pr.head.sha);
+            core.setOutput('title', pr.title);
+            core.setOutput('body', pr.body || '');
+
+      # ── Step 5: Verify CI checks pass ──────────────────────────────
+      - name: Verify CI checks pass
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const prNumber = ${{ steps.parse.outputs.pr-number }};
+            const sha = '${{ steps.pr-info.outputs.sha }}';
+
+            // Get combined status
+            const { data: status } = await github.rest.repos.getCombinedStatusForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha
+            });
+
+            // Get check runs
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha
+            });
+
+            const failing = [];
+
+            // Check commit statuses (exclude this workflow)
+            for (const s of status.statuses) {
+              if (s.state !== 'success' && s.state !== 'neutral') {
+                failing.push(`- **${s.context}**: ${s.state}`);
+              }
+            }
+
+            // Check check runs (exclude this workflow)
+            for (const check of checks.check_runs) {
+              if (check.name === 'merge') continue; // skip self
+              if (check.status !== 'completed') {
+                failing.push(`- **${check.name}**: ${check.status} (not completed)`);
+              } else if (check.conclusion !== 'success' && check.conclusion !== 'neutral' && check.conclusion !== 'skipped') {
+                failing.push(`- **${check.name}**: ${check.conclusion}`);
+              }
+            }
+
+            if (failing.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `**Merge bot:** CI checks have not passed:\n\n${failing.join('\n')}\n\nPlease fix and try again.`
+              });
+              core.setFailed('CI checks not passing');
+            }
+
+      # ── Step 6: Checkout PR branch ─────────────────────────────────
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ steps.pr-info.outputs.branch }}
+          fetch-depth: 0
+
+      # ── Step 7: Determine bump type ────────────────────────────────
+      - name: Determine bump type
+        id: bump
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = '${{ steps.pr-info.outputs.branch }}';
+            const flagPatch = ${{ steps.parse.outputs.flag-patch }};
+            const flagMinor = ${{ steps.parse.outputs.flag-minor }};
+            const flagNoBump = ${{ steps.parse.outputs.flag-no-bump }};
+
+            // Override flags take priority
+            if (flagNoBump) {
+              core.setOutput('type', 'none');
+              core.info('No bump requested via --no-bump flag');
+              return;
+            }
+            if (flagMinor) {
+              core.setOutput('type', 'minor');
+              core.info('Minor bump requested via --minor flag');
+              return;
+            }
+            if (flagPatch) {
+              core.setOutput('type', 'patch');
+              core.info('Patch bump requested via --patch flag');
+              return;
+            }
+
+            // Parse bump map
+            const bumpMap = JSON.parse('${{ inputs.bump-map }}');
+
+            // Extract prefix from branch name (everything before first /)
+            const prefix = branch.split('/')[0];
+            const bumpType = bumpMap[prefix] || 'none';
+
+            core.setOutput('type', bumpType);
+            core.info(`Branch prefix "${prefix}" maps to bump type "${bumpType}"`);
+
+      # ── Step 8: Read current version ───────────────────────────────
+      - name: Read current version
+        id: version
+        if: steps.bump.outputs.type != 'none'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const versionFile = '${{ inputs.version-file }}';
+            const elementName = '${{ inputs.version-xpath }}';
+
+            const content = fs.readFileSync(versionFile, 'utf8');
+
+            // Match XML element: <ElementName>x.y.z</ElementName>
+            // Handles optional Condition attributes
+            const regex = new RegExp(`<${elementName}[^>]*>([^<]+)</${elementName}>`);
+            const match = content.match(regex);
+
+            if (!match) {
+              core.setFailed(`Could not find <${elementName}> in ${versionFile}`);
+              return;
+            }
+
+            const current = match[1].trim();
+            core.info(`Current version: ${current}`);
+
+            const parts = current.split('.');
+            if (parts.length < 3) {
+              core.setFailed(`Version "${current}" is not in x.y.z format`);
+              return;
+            }
+
+            const major = parseInt(parts[0]);
+            const minor = parseInt(parts[1]);
+            const patch = parseInt(parts[2]);
+
+            const bumpType = '${{ steps.bump.outputs.type }}';
+            let newVersion;
+            if (bumpType === 'minor') {
+              newVersion = `${major}.${minor + 1}.0`;
+            } else if (bumpType === 'patch') {
+              newVersion = `${major}.${minor}.${patch + 1}`;
+            } else {
+              core.setFailed(`Unexpected bump type: ${bumpType}`);
+              return;
+            }
+
+            core.info(`New version: ${newVersion}`);
+            core.setOutput('current', current);
+            core.setOutput('new', newVersion);
+
+      # ── Step 9: Generate CHANGELOG entry ───────────────────────────
+      - name: Generate CHANGELOG entry
+        id: changelog
+        if: steps.bump.outputs.type != 'none'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const prNumber = ${{ steps.parse.outputs.pr-number }};
+            const newVersion = '${{ steps.version.outputs.new }}';
+            const title = `${{ steps.pr-info.outputs.title }}`;
+            const body = `${{ steps.pr-info.outputs.body }}`;
+            const changelogFile = '${{ inputs.changelog-file }}';
+            const repoUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
+            const prLink = `[#${prNumber}](${repoUrl}/pull/${prNumber})`;
+
+            // Determine CHANGELOG section from PR title type prefix
+            const typeMatch = title.match(/^(\w+)(?:\(.*?\))?:\s*(.+)$/);
+            let section = '### Changed'; // default
+            let description = title;
+
+            if (typeMatch) {
+              const type = typeMatch[1].toLowerCase();
+              description = typeMatch[2].trim();
+              // Capitalize first letter
+              description = description.charAt(0).toUpperCase() + description.slice(1);
+
+              const sectionMap = {
+                'feat': '### Added',
+                'fix': '### Fixed',
+                'refactor': '### Changed',
+                'perf': '### Changed',
+                'security': '### Security'
+              };
+              section = sectionMap[type] || '### Changed';
+            }
+
+            // Check for ## Summary section with bullet points in PR body
+            let entries = [];
+            const summaryMatch = body.match(/## Summary\s*\n([\s\S]*?)(?=\n## |\n---|\s*$)/i);
+            if (summaryMatch) {
+              const bullets = summaryMatch[1]
+                .split('\n')
+                .map(line => line.trim())
+                .filter(line => line.startsWith('- ') || line.startsWith('* '))
+                .map(line => line.replace(/^[-*]\s*/, ''));
+
+              if (bullets.length > 0) {
+                entries = bullets;
+              }
+            }
+
+            // Fall back to PR title if no summary bullets
+            if (entries.length === 0) {
+              entries = [description];
+            }
+
+            // Build the versioned CHANGELOG section
+            const today = new Date().toISOString().split('T')[0];
+            const entryLines = entries.map(e => `- ${e} (${prLink})`).join('\n');
+            const newSection = `## [${newVersion}] - ${today}\n\n${section}\n\n${entryLines}`;
+
+            // Read existing CHANGELOG and insert after header
+            let changelog = fs.readFileSync(changelogFile, 'utf8');
+
+            // Insert after the header block (find first ## or end of preamble)
+            const headerEnd = changelog.search(/\n## /);
+            if (headerEnd === -1) {
+              // No existing version sections, append to end
+              changelog = changelog.trimEnd() + '\n\n' + newSection + '\n';
+            } else {
+              // Insert before the first ## section
+              changelog = changelog.slice(0, headerEnd) + '\n' + newSection + '\n' + changelog.slice(headerEnd);
+            }
+
+            fs.writeFileSync(changelogFile, changelog);
+            core.info(`CHANGELOG updated with version ${newVersion}`);
+            core.setOutput('entry', newSection);
+
+      # ── Step 10: Update version file ───────────────────────────────
+      - name: Update version file
+        if: steps.bump.outputs.type != 'none'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const versionFile = '${{ inputs.version-file }}';
+            const elementName = '${{ inputs.version-xpath }}';
+            const currentVersion = '${{ steps.version.outputs.current }}';
+            const newVersion = '${{ steps.version.outputs.new }}';
+
+            let content = fs.readFileSync(versionFile, 'utf8');
+
+            // Replace the version value inside the element, preserving any attributes
+            const regex = new RegExp(
+              `(<${elementName}[^>]*>)${currentVersion.replace(/\./g, '\\.')}(</${elementName}>)`
+            );
+            content = content.replace(regex, `$1${newVersion}$2`);
+
+            fs.writeFileSync(versionFile, content);
+            core.info(`Updated ${versionFile}: ${currentVersion} → ${newVersion}`);
+
+      # ── Step 11: Commit and push changes ───────────────────────────
+      - name: Commit and push changes
+        id: commit
+        if: steps.bump.outputs.type != 'none'
+        run: |
+          git config user.name "auldrant-merge-bot[bot]"
+          git config user.email "auldrant-merge-bot[bot]@users.noreply.github.com"
+          git add "${{ inputs.changelog-file }}" "${{ inputs.version-file }}"
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
+          git push
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # ── Step 12: Wait for CI on new commit ─────────────────────────
+      - name: Wait for CI on bumped commit
+        id: wait-ci
+        if: steps.bump.outputs.type != 'none'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const prNumber = ${{ steps.parse.outputs.pr-number }};
+            const sha = '${{ steps.commit.outputs.sha }}';
+            const timeoutMs = 10 * 60 * 1000; // 10 minutes
+            const pollMs = 15 * 1000; // 15 seconds
+            const start = Date.now();
+
+            core.info(`Waiting for CI on commit ${sha}...`);
+
+            // Give CI a moment to start
+            await new Promise(r => setTimeout(r, 10000));
+
+            while (Date.now() - start < timeoutMs) {
+              const { data: checks } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: sha
+              });
+
+              const relevant = checks.check_runs.filter(c => c.name !== 'merge');
+
+              if (relevant.length === 0) {
+                core.info('No check runs found yet, waiting...');
+                await new Promise(r => setTimeout(r, pollMs));
+                continue;
+              }
+
+              const pending = relevant.filter(c => c.status !== 'completed');
+              if (pending.length > 0) {
+                core.info(`${pending.length} checks still running...`);
+                await new Promise(r => setTimeout(r, pollMs));
+                continue;
+              }
+
+              // All completed — check conclusions
+              const failing = relevant.filter(c =>
+                c.conclusion !== 'success' && c.conclusion !== 'neutral' && c.conclusion !== 'skipped'
+              );
+
+              if (failing.length > 0) {
+                const details = failing.map(c => `- **${c.name}**: ${c.conclusion}`).join('\n');
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: `**Merge bot:** Version bump commit failed CI:\n\n${details}\n\nPlease fix and try \`/merge\` again.`
+                });
+                core.setFailed('CI failed on bump commit');
+                return;
+              }
+
+              core.info('All CI checks passed');
+              return;
+            }
+
+            // Timeout
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: '**Merge bot:** Timed out waiting for CI on the version bump commit (10 minute limit). Please check CI status and try `/merge` again.'
+            });
+            core.setFailed('CI timeout');
+
+      # ── Step 13: Merge the PR ──────────────────────────────────────
+      - name: Merge PR
+        id: do-merge
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const prNumber = ${{ steps.parse.outputs.pr-number }};
+            const noSquash = ${{ steps.parse.outputs.flag-no-squash }};
+            const bumpType = '${{ steps.bump.outputs.type }}';
+
+            // Determine the expected head SHA
+            let expectedSha;
+            if (bumpType !== 'none') {
+              expectedSha = '${{ steps.commit.outputs.sha }}';
+            } else {
+              expectedSha = '${{ steps.pr-info.outputs.sha }}';
+            }
+
+            const mergeMethod = noSquash ? 'merge' : 'squash';
+
+            try {
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                merge_method: mergeMethod,
+                sha: expectedSha
+              });
+
+              // Delete the branch
+              const branch = '${{ steps.pr-info.outputs.branch }}';
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${branch}`
+                });
+              } catch (e) {
+                core.warning(`Could not delete branch ${branch}: ${e.message}`);
+              }
+
+              core.setOutput('merged', 'true');
+              core.setOutput('method', mergeMethod);
+            } catch (error) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `**Merge bot:** Failed to merge: ${error.message}`
+              });
+              core.setFailed(`Merge failed: ${error.message}`);
+            }
+
+      # ── Step 14: Post summary and react ────────────────────────────
+      - name: Post merge summary
+        if: steps.do-merge.outputs.merged == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const prNumber = ${{ steps.parse.outputs.pr-number }};
+            const bumpType = '${{ steps.bump.outputs.type }}';
+            const mergeMethod = '${{ steps.do-merge.outputs.method }}';
+
+            let summary = `**Merge bot:** Merged via ${mergeMethod}.`;
+
+            if (bumpType !== 'none') {
+              const oldVersion = '${{ steps.version.outputs.current }}';
+              const newVersion = '${{ steps.version.outputs.new }}';
+              summary += `\n\n**Version:** ${oldVersion} → ${newVersion} (${bumpType} bump)`;
+            } else {
+              summary += '\n\n**Version:** No bump (non-code change).';
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: summary
+            });
+
+            // React with checkmark
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: '+1'
+            });
