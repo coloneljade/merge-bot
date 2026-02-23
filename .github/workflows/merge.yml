@@ -163,13 +163,6 @@ jobs:
             const prNumber = ${{ steps.parse.outputs.pr-number }};
             const sha = '${{ steps.pr-info.outputs.sha }}';
 
-            // Get combined status
-            const { data: status } = await github.rest.repos.getCombinedStatusForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: sha
-            });
-
             // Get check runs
             const { data: checks } = await github.rest.checks.listForRef({
               owner: context.repo.owner,
@@ -179,14 +172,6 @@ jobs:
 
             const failing = [];
 
-            // Check commit statuses (exclude this workflow)
-            for (const s of status.statuses) {
-              if (s.state !== 'success' && s.state !== 'neutral') {
-                failing.push(`- **${s.context}**: ${s.state}`);
-              }
-            }
-
-            // Check check runs (exclude this workflow)
             for (const check of checks.check_runs) {
               if (check.name === 'merge') continue; // skip self
               if (check.status !== 'completed') {

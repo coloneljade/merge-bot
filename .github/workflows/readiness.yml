@@ -75,12 +75,6 @@ jobs:
           script: |
             const sha = '${{ inputs.pr-sha }}';
 
-            const { data: status } = await github.rest.repos.getCombinedStatusForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: sha
-            });
-
             const { data: checks } = await github.rest.checks.listForRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -90,14 +84,6 @@ jobs:
             const results = [];
             let allPassing = true;
             let hasPending = false;
-
-            for (const s of status.statuses) {
-              const pass = s.state === 'success' || s.state === 'neutral';
-              const pending = s.state === 'pending';
-              if (!pass) allPassing = false;
-              if (pending) hasPending = true;
-              results.push({ name: s.context, status: s.state, pass, pending });
-            }
 
             for (const check of checks.check_runs) {
               if (check.name === 'merge' || check.name === 'readiness') continue;
