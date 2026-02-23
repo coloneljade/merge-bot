@@ -1,0 +1,17 @@
+name: Merge Bot
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: merge-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/merge')
+    uses: ./.github/workflows/merge.yml
+    secrets:
+      app-id: ${{ secrets.MERGE_APP_ID }}
+      private-key: ${{ secrets.MERGE_APP_PRIVATE_KEY }}

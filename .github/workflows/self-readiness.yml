@@ -1,0 +1,15 @@
+name: Merge Readiness
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+jobs:
+  readiness:
+    uses: ./.github/workflows/readiness.yml
+    with:
+      pr-number: ${{ github.event.pull_request.number }}
+      pr-sha: ${{ github.event.pull_request.head.sha }}
+    secrets:
+      app-id: ${{ secrets.MERGE_APP_ID }}
+      private-key: ${{ secrets.MERGE_APP_PRIVATE_KEY }}
