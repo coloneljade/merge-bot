@@ -121,6 +121,42 @@ PR title format `type(scope): description` maps to sections:
 
 If the PR body contains a `## Summary` section with bullet points, those are used as entries instead of the title.
 
+## Readiness Check
+
+Add a readiness check workflow to show merge status on PRs:
+
+```yaml
+# .github/workflows/readiness.yml
+name: Merge Readiness
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: read
+jobs:
+  readiness:
+    uses: coloneljade/merge-bot/.github/workflows/readiness.yml@v1
+    with:
+      pr-number: ${{ github.event.pull_request.number }}
+      pr-sha: ${{ github.event.pull_request.head.sha }}
+    secrets:
+      app-id: ${{ secrets.MERGE_APP_ID }}
+      private-key: ${{ secrets.MERGE_APP_PRIVATE_KEY }}
+```
+
+The readiness check posts a sticky comment on each PR showing:
+- Draft status
+- Merge conflict status
+- CI check results
+- Version bump preview
+
+The comment updates in place on each push (no comment spam).
+
+**Important:** Caller workflows must include the `permissions` block shown above. Reusable workflow permissions must be a subset of the caller's permissions.
+
 ## GitHub Setup
 
 ### 1. Create the GitHub App
