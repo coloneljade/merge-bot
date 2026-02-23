@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Support JSON version files (e.g., `package.json`) with auto-detection by file extension
+- Auto-update `@v1` tag to latest `main` on every push
 
 ### Fixed
 
