@@ -56,7 +56,7 @@ Flags can be combined: `/merge --patch --no-squash`
 |-------|------|---------|-------------|
 | `bump-map` | string | `{"feature":"minor","feat":"minor","fix":"patch"}` | JSON mapping branch prefix to bump type |
 | `version-file` | string | `Directory.Build.props` | Path to file containing version |
-| `version-xpath` | string | `VersionPrefix` | XML element name holding the version |
+| `version-xpath` | string | `VersionPrefix` | XML element name holding the version (XML files only) |
 | `changelog-file` | string | `CHANGELOG.md` | Path to CHANGELOG file |
 
 ## Secrets Reference
@@ -223,3 +223,21 @@ This ensures only the bot can push directly to `main`. Everyone else must go thr
 - If no version file exists, the bot still generates CHANGELOG entries under `## [Unreleased]` but skips version bumping.
 - If no CHANGELOG file exists, the bot skips CHANGELOG generation entirely.
 - The readiness check workflow posts a sticky comment on PRs showing merge status, CI checks, and version preview.
+
+### JSON Support (package.json)
+
+The version file format is auto-detected by file extension. For `.json` files (e.g., `package.json`), the bot reads and writes the `version` property directly. The `version-xpath` input is ignored for JSON files.
+
+```yaml
+uses: coloneljade/merge-bot/.github/workflows/merge.yml@v1
+with:
+  version-file: 'package.json'
+```
+
+### XML Support (.NET, etc.)
+
+For non-JSON files (default), the bot uses the `version-xpath` input as the XML element name. This is the original behavior for `.NET` repos using `Directory.Build.props`.
+
+## Versioning
+
+The `@v1` tag always points to the latest commit on `main`. Consumers referencing `@v1` automatically get updates without changing their workflow files.

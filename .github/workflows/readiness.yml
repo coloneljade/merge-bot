@@ -146,15 +146,24 @@ jobs:
             }
 
             const content = fs.readFileSync(versionFile, 'utf8');
-            const regex = new RegExp(`<${elementName}[^>]*>([^<]+)</${elementName}>`);
-            const match = content.match(regex);
 
-            if (!match) {
-              core.setOutput('preview', `Could not read version from ${versionFile}`);
-              return;
+            let current;
+            if (versionFile.endsWith('.json')) {
+              const json = JSON.parse(content);
+              current = json.version;
+              if (!current) {
+                core.setOutput('preview', `No "version" property in ${versionFile}`);
+                return;
+              }
+            } else {
+              const regex = new RegExp(`<${elementName}[^>]*>([^<]+)</${elementName}>`);
+              const match = content.match(regex);
+              if (!match) {
+                core.setOutput('preview', `Could not read version from ${versionFile}`);
+                return;
+              }
+              current = match[1].trim();
             }
-
-            const current = match[1].trim();
             const [major, minor, patch] = current.split('.').map(Number);
             let next;
             if (bumpType === 'minor') next = `${major}.${minor + 1}.0`;
