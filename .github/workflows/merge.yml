@@ -173,7 +173,7 @@ jobs:
             const failing = [];
 
             for (const check of checks.check_runs) {
-              if (check.name === 'merge') continue; // skip self
+              if (check.name.includes('merge') || check.name.includes('readiness')) continue;
               if (check.status !== 'completed') {
                 failing.push(`- **${check.name}**: ${check.status} (not completed)`);
               } else if (check.conclusion !== 'success' && check.conclusion !== 'neutral' && check.conclusion !== 'skipped') {
@@ -494,7 +494,7 @@ jobs:
                 ref: sha
               });
 
-              const relevant = checks.check_runs.filter(c => c.name !== 'merge');
+              const relevant = checks.check_runs.filter(c => !c.name.includes('merge') && !c.name.includes('readiness'));
 
               if (relevant.length === 0) {
                 emptyPolls++;
