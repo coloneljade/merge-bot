@@ -263,6 +263,14 @@ jobs:
             const versionFile = '${{ inputs.version-file }}';
             const elementName = '${{ inputs.version-xpath }}';
 
+            // Version file is optional — repos without one still get CHANGELOG updates
+            if (!fs.existsSync(versionFile)) {
+              core.info(`Version file "${versionFile}" not found — skipping version bump`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            core.setOutput('skip', 'false');
             const content = fs.readFileSync(versionFile, 'utf8');
 
             // Match XML element: <ElementName>x.y.z</ElementName>
@@ -312,7 +320,8 @@ jobs:
           script: |
             const fs = require('fs');
             const prNumber = ${{ steps.parse.outputs.pr-number }};
-            const newVersion = '${{ steps.version.outputs.new }}';
+            const skipVersion = '${{ steps.version.outputs.skip }}' === 'true';
+            const newVersion = skipVersion ? null : '${{ steps.version.outputs.new }}';
             const title = `${{ steps.pr-info.outputs.title }}`;
             const body = `${{ steps.pr-info.outputs.body }}`;
             const changelogFile = '${{ inputs.changelog-file }}';
@@ -360,31 +369,79 @@ jobs:
               entries = [description];
             }
 
-            // Build the versioned CHANGELOG section
-            const today = new Date().toISOString().split('T')[0];
             const entryLines = entries.map(e => `- ${e} (${prLink})`).join('\n');
-            const newSection = `## [${newVersion}] - ${today}\n\n${section}\n\n${entryLines}`;
 
-            // Read existing CHANGELOG and insert after header
+            // Check if CHANGELOG exists
+            if (!fs.existsSync(changelogFile)) {
+              core.info(`CHANGELOG file "${changelogFile}" not found — skipping`);
+              core.setOutput('entry', '');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            core.setOutput('skip', 'false');
             let changelog = fs.readFileSync(changelogFile, 'utf8');
 
-            // Insert after the header block (find first ## or end of preamble)
-            const headerEnd = changelog.search(/\n## /);
-            if (headerEnd === -1) {
-              // No existing version sections, append to end
-              changelog = changelog.trimEnd() + '\n\n' + newSection + '\n';
+            if (newVersion) {
+              // ── Versioned entry: create a new dated section ──
+              const today = new Date().toISOString().split('T')[0];
+              const newSection = `## [${newVersion}] - ${today}\n\n${section}\n\n${entryLines}`;
+
+              const headerEnd = changelog.search(/\n## /);
+              if (headerEnd === -1) {
+                changelog = changelog.trimEnd() + '\n\n' + newSection + '\n';
+              } else {
+                changelog = changelog.slice(0, headerEnd) + '\n' + newSection + '\n' + changelog.slice(headerEnd);
+              }
+
+              core.info(`CHANGELOG updated with version ${newVersion}`);
+              core.setOutput('entry', newSection);
             } else {
-              // Insert before the first ## section
-              changelog = changelog.slice(0, headerEnd) + '\n' + newSection + '\n' + changelog.slice(headerEnd);
+              // ── No version file: append to [Unreleased] section ──
+              const unreleasedRegex = /## \[Unreleased\]\s*\n([\s\S]*?)(?=\n## \[|$)/;
+              const unreleasedMatch = changelog.match(unreleasedRegex);
+
+              if (unreleasedMatch) {
+                const existingContent = unreleasedMatch[1];
+
+                // Check if the target subsection already exists
+                const subsectionRegex = new RegExp(`(${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\n([\\s\\S]*?)(?=\\n### |$)`);
+                const subsectionMatch = existingContent.match(subsectionRegex);
+
+                if (subsectionMatch) {
+                  // Append entries to existing subsection
+                  const existingEntries = subsectionMatch[2].trimEnd();
+                  const updatedSubsection = `${subsectionMatch[1]}\n${existingEntries}\n${entryLines}`;
+                  const updatedUnreleased = existingContent.replace(
+                    subsectionMatch[0],
+                    updatedSubsection
+                  );
+                  changelog = changelog.replace(unreleasedMatch[0], `## [Unreleased]\n${updatedUnreleased}`);
+                } else {
+                  // Add new subsection at end of [Unreleased]
+                  const updatedUnreleased = `${existingContent.trimEnd()}\n\n${section}\n\n${entryLines}\n`;
+                  changelog = changelog.replace(unreleasedMatch[0], `## [Unreleased]\n${updatedUnreleased}`);
+                }
+              } else {
+                // No [Unreleased] section — create one
+                const newSection = `## [Unreleased]\n\n${section}\n\n${entryLines}`;
+                const headerEnd = changelog.search(/\n## /);
+                if (headerEnd === -1) {
+                  changelog = changelog.trimEnd() + '\n\n' + newSection + '\n';
+                } else {
+                  changelog = changelog.slice(0, headerEnd) + '\n' + newSection + '\n' + changelog.slice(headerEnd);
+                }
+              }
+
+              core.info('CHANGELOG updated with [Unreleased] entry');
+              core.setOutput('entry', `${section}\n${entryLines}`);
             }
 
             fs.writeFileSync(changelogFile, changelog);
-            core.info(`CHANGELOG updated with version ${newVersion}`);
-            core.setOutput('entry', newSection);
 
       # ── Step 10: Update version file ───────────────────────────────
       - name: Update version file
-        if: steps.bump.outputs.type != 'none'
+        if: steps.bump.outputs.type != 'none' && steps.version.outputs.skip != 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -408,19 +465,27 @@ jobs:
       # ── Step 11: Commit and push changes ───────────────────────────
       - name: Commit and push changes
         id: commit
-        if: steps.bump.outputs.type != 'none'
+        if: steps.bump.outputs.type != 'none' && steps.changelog.outputs.skip != 'true'
         run: |
           git config user.name "auldrant-merge-bot[bot]"
           git config user.email "auldrant-merge-bot[bot]@users.noreply.github.com"
-          git add "${{ inputs.changelog-file }}" "${{ inputs.version-file }}"
-          git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
+
+          SKIP_VERSION="${{ steps.version.outputs.skip }}"
+          if [ "$SKIP_VERSION" = "true" ]; then
+            git add "${{ inputs.changelog-file }}"
+            git commit -m "chore: update CHANGELOG"
+          else
+            git add "${{ inputs.changelog-file }}" "${{ inputs.version-file }}"
+            git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
+          fi
+
           git push
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # ── Step 12: Wait for CI on new commit ─────────────────────────
       - name: Wait for CI on bumped commit
         id: wait-ci
-        if: steps.bump.outputs.type != 'none'
+        if: steps.commit.outputs.sha
         uses: actions/github-script@v7
         with:
           github-token: ${{ steps.app-token.outputs.token }}
@@ -436,6 +501,7 @@ jobs:
             // Give CI a moment to start
             await new Promise(r => setTimeout(r, 10000));
 
+            let emptyPolls = 0;
             while (Date.now() - start < timeoutMs) {
               const { data: checks } = await github.rest.checks.listForRef({
                 owner: context.repo.owner,
@@ -446,6 +512,11 @@ jobs:
               const relevant = checks.check_runs.filter(c => c.name !== 'merge');
 
               if (relevant.length === 0) {
+                emptyPolls++;
+                if (emptyPolls >= 3) {
+                  core.info('No CI checks found after waiting — assuming no CI configured');
+                  return;
+                }
                 core.info('No check runs found yet, waiting...');
                 await new Promise(r => setTimeout(r, pollMs));
                 continue;
@@ -500,12 +571,8 @@ jobs:
             const bumpType = '${{ steps.bump.outputs.type }}';
 
             // Determine the expected head SHA
-            let expectedSha;
-            if (bumpType !== 'none') {
-              expectedSha = '${{ steps.commit.outputs.sha }}';
-            } else {
-              expectedSha = '${{ steps.pr-info.outputs.sha }}';
-            }
+            const commitSha = '${{ steps.commit.outputs.sha }}';
+            const expectedSha = commitSha || '${{ steps.pr-info.outputs.sha }}';
 
             const mergeMethod = noSquash ? 'merge' : 'squash';
 
@@ -553,14 +620,22 @@ jobs:
             const bumpType = '${{ steps.bump.outputs.type }}';
             const mergeMethod = '${{ steps.do-merge.outputs.method }}';
 
+            const skipVersion = '${{ steps.version.outputs.skip }}' === 'true';
+            const skipChangelog = '${{ steps.changelog.outputs.skip }}' === 'true';
             let summary = `**Merge bot:** Merged via ${mergeMethod}.`;
 
-            if (bumpType !== 'none') {
+            if (bumpType === 'none') {
+              summary += '\n\n**Version:** No bump (non-code change).';
+            } else if (skipVersion) {
+              summary += '\n\n**Version:** No version file — CHANGELOG updated only.';
+            } else {
               const oldVersion = '${{ steps.version.outputs.current }}';
               const newVersion = '${{ steps.version.outputs.new }}';
               summary += `\n\n**Version:** ${oldVersion} → ${newVersion} (${bumpType} bump)`;
-            } else {
-              summary += '\n\n**Version:** No bump (non-code change).';
+            }
+
+            if (skipChangelog) {
+              summary += '\n**CHANGELOG:** Skipped (no CHANGELOG file).';
             }
 
             await github.rest.issues.createComment({
