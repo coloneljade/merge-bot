@@ -449,9 +449,11 @@ jobs:
             let content = fs.readFileSync(versionFile, 'utf8');
 
             if (versionFile.endsWith('.json')) {
-              const json = JSON.parse(content);
-              json.version = newVersion;
-              fs.writeFileSync(versionFile, JSON.stringify(json, null, 2) + '\n');
+              content = content.replace(
+                /("version"\s*:\s*")([^"]+)(")/,
+                `$1${newVersion}$3`
+              );
+              fs.writeFileSync(versionFile, content);
             } else {
               // XML: replace version inside element, preserving attributes
               const regex = new RegExp(
