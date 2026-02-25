@@ -435,8 +435,15 @@ jobs:
             fs.writeFileSync(changelogFile, changelog);
 
       # ── Step 10: Update version file ───────────────────────────────
-      - name: Update version file
-        if: steps.bump.outputs.type != 'none' && steps.version.outputs.skip != 'true'
+      - name: Update version file (JSON)
+        if: steps.bump.outputs.type != 'none' && steps.version.outputs.skip != 'true' && endsWith(inputs.version-file, '.json')
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+          VERSION_FILE: ${{ inputs.version-file }}
+        run: npm version "$NEW_VERSION" --no-git-tag-version --package-lock=false --prefix "$(dirname "$VERSION_FILE")"
+
+      - name: Update version file (XML)
+        if: steps.bump.outputs.type != 'none' && steps.version.outputs.skip != 'true' && !endsWith(inputs.version-file, '.json')
         uses: actions/github-script@v7
         with:
           script: |
@@ -448,20 +455,12 @@ jobs:
 
             let content = fs.readFileSync(versionFile, 'utf8');
 
-            if (versionFile.endsWith('.json')) {
-              content = content.replace(
-                /("version"\s*:\s*")([^"]+)(")/,
-                `$1${newVersion}$3`
-              );
-              fs.writeFileSync(versionFile, content);
-            } else {
-              // XML: replace version inside element, preserving attributes
-              const regex = new RegExp(
-                `(<${elementName}[^>]*>)${currentVersion.replace(/\./g, '\\.')}(</${elementName}>)`
-              );
-              content = content.replace(regex, `$1${newVersion}$2`);
-              fs.writeFileSync(versionFile, content);
-            }
+            // XML: replace version inside element, preserving attributes
+            const regex = new RegExp(
+              `(<${elementName}[^>]*>)${currentVersion.replace(/\./g, '\\.')}(</${elementName}>)`
+            );
+            content = content.replace(regex, `$1${newVersion}$2`);
+            fs.writeFileSync(versionFile, content);
             core.info(`Updated ${versionFile}: ${currentVersion} → ${newVersion}`);
 
       # ── Step 11: Commit and push changes ───────────────────────────
