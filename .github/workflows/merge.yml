@@ -154,42 +154,79 @@ jobs:
             core.setOutput('title', pr.title);
             core.setOutput('body', pr.body || '');
 
-      # ── Step 5: Verify CI checks pass ──────────────────────────────
-      - name: Verify CI checks pass
+      # ── Step 5: Wait for CI checks to pass ────────────────────────
+      - name: Wait for CI checks to pass
         uses: actions/github-script@v7
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const prNumber = ${{ steps.parse.outputs.pr-number }};
             const sha = '${{ steps.pr-info.outputs.sha }}';
+            const timeoutMs = 10 * 60 * 1000; // 10 minutes
+            const pollMs = 30 * 1000; // 30 seconds
+            const start = Date.now();
 
-            // Get check runs
-            const { data: checks } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: sha
-            });
+            core.info(`Waiting for CI checks on ${sha}...`);
 
-            const failing = [];
-
-            for (const check of checks.check_runs) {
-              if (check.name.includes('merge') || check.name.includes('readiness')) continue;
-              if (check.status !== 'completed') {
-                failing.push(`- **${check.name}**: ${check.status} (not completed)`);
-              } else if (check.conclusion !== 'success' && check.conclusion !== 'neutral' && check.conclusion !== 'skipped') {
-                failing.push(`- **${check.name}**: ${check.conclusion}`);
-              }
-            }
-
-            if (failing.length > 0) {
-              await github.rest.issues.createComment({
+            let emptyPolls = 0;
+            while (Date.now() - start < timeoutMs) {
+              const { data: checks } = await github.rest.checks.listForRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `**Merge bot:** CI checks have not passed:\n\n${failing.join('\n')}\n\nPlease fix and try again.`
+                ref: sha
               });
-              core.setFailed('CI checks not passing');
+
+              const relevant = checks.check_runs.filter(c =>
+                !c.name.includes('merge') && !c.name.includes('readiness')
+              );
+
+              if (relevant.length === 0) {
+                emptyPolls++;
+                if (emptyPolls >= 3) {
+                  core.info('No CI checks found after waiting — assuming no CI configured');
+                  return;
+                }
+                core.info('No check runs found yet, waiting...');
+                await new Promise(r => setTimeout(r, pollMs));
+                continue;
+              }
+
+              const pending = relevant.filter(c => c.status !== 'completed');
+              if (pending.length > 0) {
+                core.info(`${pending.length} check(s) still running: ${pending.map(c => c.name).join(', ')}`);
+                await new Promise(r => setTimeout(r, pollMs));
+                continue;
+              }
+
+              // All completed — check conclusions
+              const failing = relevant.filter(c =>
+                c.conclusion !== 'success' && c.conclusion !== 'neutral' && c.conclusion !== 'skipped'
+              );
+
+              if (failing.length > 0) {
+                const details = failing.map(c => `- **${c.name}**: ${c.conclusion}`).join('\n');
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: `**Merge bot:** CI checks failed:\n\n${details}\n\nPlease fix and try again.`
+                });
+                core.setFailed('CI checks failed');
+                return;
+              }
+
+              core.info(`All ${relevant.length} CI check(s) passed`);
+              return;
             }
+
+            // Timeout
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: '**Merge bot:** Timed out waiting for CI checks to complete (10 minute limit). Please check CI status and try `/merge` again.'
+            });
+            core.setFailed('CI checks timeout');
 
       # ── Step 6: Checkout PR branch ─────────────────────────────────
       - name: Checkout PR branch
