@@ -18,3 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Replace raw regex with `npm version` for `package.json` version updates ([#9](https://github.com/coloneljade/merge-bot/pull/9))
 - XML files keep the existing regex approach unchanged ([#9](https://github.com/coloneljade/merge-bot/pull/9))
 - Uses `--no-git-tag-version`, `--package-lock=false`, and `--prefix` flags ([#9](https://github.com/coloneljade/merge-bot/pull/9))
+- Replace single point-in-time CI check with poll-and-wait loop (30s interval, 10min timeout) ([#12](https://github.com/coloneljade/merge-bot/pull/12))
+- Log which checks are still running during each poll cycle ([#12](https://github.com/coloneljade/merge-bot/pull/12))
+- Reuses the same pattern already used for bump commit CI waiting (Step 12) ([#12](https://github.com/coloneljade/merge-bot/pull/12))
