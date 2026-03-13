@@ -21,3 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Replace single point-in-time CI check with poll-and-wait loop (30s interval, 10min timeout) ([#12](https://github.com/coloneljade/merge-bot/pull/12))
 - Log which checks are still running during each poll cycle ([#12](https://github.com/coloneljade/merge-bot/pull/12))
 - Reuses the same pattern already used for bump commit CI waiting (Step 12) ([#12](https://github.com/coloneljade/merge-bot/pull/12))
+- Remove CI check step from readiness workflow ([#14](https://github.com/coloneljade/merge-bot/pull/14))
+- Remove CI status row from readiness PR comment ([#14](https://github.com/coloneljade/merge-bot/pull/14))
+- GitHub's native checks UI already shows CI status inline ([#14](https://github.com/coloneljade/merge-bot/pull/14))
+- Comment now focuses on bot-specific info: draft status, conflicts, version preview, /merge CTA ([#14](https://github.com/coloneljade/merge-bot/pull/14))
