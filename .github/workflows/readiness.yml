@@ -33,7 +33,6 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
-  checks: read
 
 jobs:
   readiness:
@@ -67,46 +66,7 @@ jobs:
             core.setOutput('branch', pr.head.ref);
             core.setOutput('title', pr.title);
 
-      # ── Step 3: Check CI status ────────────────────────────────────
-      - name: Check CI status
-        id: ci-status
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ steps.app-token.outputs.token }}
-          script: |
-            const sha = '${{ inputs.pr-sha }}';
-
-            const { data: checks } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: sha
-            });
-
-            const results = [];
-            let allPassing = true;
-            let hasPending = false;
-
-            for (const check of checks.check_runs) {
-              // Skip self and merge bot checks (name format: "job / job" for reusable workflows)
-              if (check.name.includes('merge') || check.name.includes('readiness')) continue;
-              const pending = check.status !== 'completed';
-              const pass = !pending && (check.conclusion === 'success' || check.conclusion === 'neutral' || check.conclusion === 'skipped');
-              if (!pass) allPassing = false;
-              if (pending) hasPending = true;
-              results.push({
-                name: check.name,
-                status: pending ? check.status : check.conclusion,
-                pass,
-                pending
-              });
-            }
-
-            core.setOutput('all-passing', allPassing && results.length > 0);
-            core.setOutput('has-pending', hasPending);
-            core.setOutput('no-checks', results.length === 0);
-            core.setOutput('results', JSON.stringify(results));
-
-      # ── Step 4: Determine bump preview ─────────────────────────────
+      # ── Step 3: Determine bump preview ─────────────────────────────
       - name: Determine bump preview
         id: bump
         uses: actions/github-script@v7
@@ -120,7 +80,7 @@ jobs:
             core.setOutput('type', bumpType);
             core.setOutput('prefix', prefix);
 
-      # ── Step 5: Check version file ─────────────────────────────────
+      # ── Step 4: Check version file ─────────────────────────────────
       - name: Check version file
         id: version
         if: steps.bump.outputs.type != 'none'
@@ -173,7 +133,7 @@ jobs:
 
             core.setOutput('preview', `${current} → ${next} (${bumpType})`);
 
-      # ── Step 6: Post or update sticky comment ──────────────────────
+      # ── Step 5: Post or update sticky comment ──────────────────────
       - name: Post readiness comment
         uses: actions/github-script@v7
         with:
@@ -185,10 +145,6 @@ jobs:
             // Gather check results
             const isDraft = ${{ steps.pr-info.outputs.draft }};
             const mergeable = '${{ steps.pr-info.outputs.mergeable }}';
-            const ciAllPassing = ${{ steps.ci-status.outputs.all-passing }};
-            const ciHasPending = ${{ steps.ci-status.outputs.has-pending }};
-            const ciNoChecks = ${{ steps.ci-status.outputs.no-checks }};
-            const ciResults = JSON.parse('${{ steps.ci-status.outputs.results }}');
             const bumpType = '${{ steps.bump.outputs.type }}';
             const versionPreview = '${{ steps.version-info.outputs.preview }}';
 
@@ -211,19 +167,6 @@ jobs:
               checks.push('- :white_check_mark: No merge conflicts');
             }
 
-            // CI checks
-            if (ciNoChecks) {
-              checks.push('- :white_circle: No CI checks configured');
-            } else if (ciAllPassing) {
-              checks.push('- :white_check_mark: All CI checks passing');
-            } else if (ciHasPending) {
-              const pendingNames = ciResults.filter(r => r.pending).map(r => r.name);
-              checks.push(`- :yellow_circle: CI checks pending: ${pendingNames.join(', ')}`);
-            } else {
-              const failingNames = ciResults.filter(r => !r.pass && !r.pending).map(r => `${r.name} (${r.status})`);
-              checks.push(`- :red_circle: **CI checks failing:** ${failingNames.join(', ')}`);
-            }
-
             // Version/bump preview
             if (bumpType === 'none') {
               checks.push('- :white_circle: No version bump (branch prefix not in bump map)');
@@ -232,7 +175,7 @@ jobs:
             }
 
             // Overall status
-            const hasBlocker = isDraft || mergeable === 'false' || (!ciAllPassing && !ciNoChecks);
+            const hasBlocker = isDraft || mergeable === 'false';
             const status = hasBlocker ? ':warning: **Not ready to merge**' : ':rocket: **Ready to merge** — comment `/merge` to proceed';
 
             const body = [
