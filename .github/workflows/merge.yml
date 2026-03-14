@@ -57,6 +57,7 @@ jobs:
             const flags = {
               patch: args.includes('--patch'),
               minor: args.includes('--minor'),
+              major: args.includes('--major'),
               noBump: args.includes('--no-bump'),
               noSquash: args.includes('--no-squash')
             };
@@ -64,6 +65,7 @@ jobs:
             core.setOutput('pr-number', prNumber);
             core.setOutput('flag-patch', flags.patch);
             core.setOutput('flag-minor', flags.minor);
+            core.setOutput('flag-major', flags.major);
             core.setOutput('flag-no-bump', flags.noBump);
             core.setOutput('flag-no-squash', flags.noSquash);
 
@@ -245,12 +247,18 @@ jobs:
             const branch = '${{ steps.pr-info.outputs.branch }}';
             const flagPatch = ${{ steps.parse.outputs.flag-patch }};
             const flagMinor = ${{ steps.parse.outputs.flag-minor }};
+            const flagMajor = ${{ steps.parse.outputs.flag-major }};
             const flagNoBump = ${{ steps.parse.outputs.flag-no-bump }};
 
             // Override flags take priority
             if (flagNoBump) {
               core.setOutput('type', 'none');
               core.info('No bump requested via --no-bump flag');
+              return;
+            }
+            if (flagMajor) {
+              core.setOutput('type', 'major');
+              core.info('Major bump requested via --major flag');
               return;
             }
             if (flagMinor) {
@@ -327,7 +335,9 @@ jobs:
 
             const bumpType = '${{ steps.bump.outputs.type }}';
             let newVersion;
-            if (bumpType === 'minor') {
+            if (bumpType === 'major') {
+              newVersion = `${major + 1}.0.0`;
+            } else if (bumpType === 'minor') {
               newVersion = `${major}.${minor + 1}.0`;
             } else if (bumpType === 'patch') {
               newVersion = `${major}.${minor}.${patch + 1}`;
