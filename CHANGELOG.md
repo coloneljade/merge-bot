@@ -25,3 +25,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Remove CI status row from readiness PR comment ([#14](https://github.com/coloneljade/merge-bot/pull/14))
 - GitHub's native checks UI already shows CI status inline ([#14](https://github.com/coloneljade/merge-bot/pull/14))
 - Comment now focuses on bot-specific info: draft status, conflicts, version preview, /merge CTA ([#14](https://github.com/coloneljade/merge-bot/pull/14))
+- fix: read version from base branch in readiness check ([#15](https://github.com/coloneljade/merge-bot/pull/15))
+- chore: add .gitignore for audit log ([#15](https://github.com/coloneljade/merge-bot/pull/15))
