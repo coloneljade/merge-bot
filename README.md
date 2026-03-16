@@ -43,6 +43,7 @@ jobs:
 | Command | Behavior |
 |---------|----------|
 | `/merge` | Merge with auto-detected bump from branch prefix |
+| `/merge --major` | Force major version bump |
 | `/merge --minor` | Force minor version bump |
 | `/merge --patch` | Force patch version bump |
 | `/merge --no-bump` | Merge without version bump or CHANGELOG |
@@ -217,7 +218,7 @@ This ensures only the bot can push directly to `main`. Everyone else must go thr
 
 ## Version Behavior
 
-- **Major versions are never auto-bumped.** The bot only increments minor/patch within the current major version. Major bumps (e.g., `1.x.x` to `2.0.0`) are a manual process.
+- **Major versions are never auto-bumped from branch prefix.** The branch prefix map only triggers minor/patch bumps. To bump major (e.g., `0.x.x` to `1.0.0`), pass `/merge --major` explicitly.
 - The bot reads the current version from the configured `version-file` and `version-xpath`, computes the bump, writes it back, and commits.
 - If no bump is needed (branch prefix not in map, or `--no-bump` flag), the bot skips CHANGELOG and version changes entirely.
 - If no version file exists, the bot still generates CHANGELOG entries under `## [Unreleased]` but skips version bumping.
