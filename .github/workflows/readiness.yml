@@ -128,7 +128,8 @@ jobs:
             }
             const [major, minor, patch] = current.split('.').map(Number);
             let next;
-            if (bumpType === 'minor') next = `${major}.${minor + 1}.0`;
+            if (bumpType === 'major') next = `${major + 1}.0.0`;
+            else if (bumpType === 'minor') next = `${major}.${minor + 1}.0`;
             else if (bumpType === 'patch') next = `${major}.${minor}.${patch + 1}`;
             else next = current;
 
