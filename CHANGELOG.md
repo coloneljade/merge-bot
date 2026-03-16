@@ -27,3 +27,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Comment now focuses on bot-specific info: draft status, conflicts, version preview, /merge CTA ([#14](https://github.com/coloneljade/merge-bot/pull/14))
 - fix: read version from base branch in readiness check ([#15](https://github.com/coloneljade/merge-bot/pull/15))
 - chore: add .gitignore for audit log ([#15](https://github.com/coloneljade/merge-bot/pull/15))
+- Fix readiness version preview falling through to 'no bump' when `--major` is passed — now correctly previews `0.x.x → 1.0.0` ([#16](https://github.com/coloneljade/merge-bot/pull/16))
+- Add `--major` to the commands table in README ([#16](https://github.com/coloneljade/merge-bot/pull/16))
+- Update Version Behavior section to accurately describe that major bumps are manual-flag-triggered, not unsupported ([#16](https://github.com/coloneljade/merge-bot/pull/16))
