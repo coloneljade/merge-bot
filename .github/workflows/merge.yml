@@ -386,7 +386,7 @@ jobs:
 
             for (const c of commits) {
               const msg = c.commit.message.split('\n')[0];
-              const match = msg.match(/^(\w+)(?:\(.*?\))?:\s*(.+)$/);
+              const match = msg.match(/^(\w+)(?:\(.*?\))?!?:\s*(.+)$/);
               if (!match) continue;
               const sec = sectionMap[match[1].toLowerCase()];
               if (!sec) continue;
