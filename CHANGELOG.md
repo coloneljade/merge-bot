@@ -9,7 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Support JSON version files (e.g., `package.json`) with auto-detection by file extension
 - Auto-update `@v1` tag to latest `main` on every push
-
+- Commit-based CHANGELOG section routing — entries are placed in the correct CHANGELOG section based on conventional commit type (Fixes #17) ([#19](https://github.com/coloneljade/merge-bot/pull/19))
+- Pre-push hook for branch name validation (Fixes #18) ([#19](https://github.com/coloneljade/merge-bot/pull/19))
+- Update CHANGELOG generation section in README ([#19](https://github.com/coloneljade/merge-bot/pull/19))
 ### Fixed
 
 - Add Readiness Check section to README with setup instructions ([#5](https://github.com/coloneljade/merge-bot/pull/5))

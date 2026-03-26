@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Validate that the current branch uses a recognized type/ prefix.
+#
+# Algorithm:
+#   1. Read the current branch name
+#   2. Allow main and detached HEAD unconditionally
+#   3. Extract the prefix (everything before the first /)
+#   4. Check prefix against the allow list of conventional branch types
+#   5. Reject with an actionable error if the prefix is not recognized
+#
+# The allow list covers all conventional commit types plus "feature" as a
+# common alias for "feat". This is intentionally broader than the merge bot's
+# bump-map — a branch can be valid (e.g., docs/) even if it doesn't trigger
+# a version bump.
+#
+# Exit 0: branch name is valid
+# Exit 1: branch name uses an unrecognized prefix
+
+set -euo pipefail
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Always allow main and detached HEAD
+if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "HEAD" ]; then
+  exit 0
+fi
+
+# Extract prefix (everything before the first /)
+PREFIX="${BRANCH%%/*}"
+
+# Reject if no / separator (prefix equals the full branch name)
+if [ "$PREFIX" = "$BRANCH" ]; then
+  echo "error: branch \"$BRANCH\" must use type/description format (e.g., feat/my-feature)"
+  echo "Valid prefixes: feature, feat, fix, refactor, docs, chore, ci, test, style, perf, security"
+  exit 1
+fi
+
+VALID_PREFIXES="feature feat fix refactor docs chore ci test style perf security"
+
+for valid in $VALID_PREFIXES; do
+  if [ "$PREFIX" = "$valid" ]; then
+    exit 0
+  fi
+done
+
+echo "error: unrecognized branch prefix \"$PREFIX\" in branch \"$BRANCH\""
+echo "Valid prefixes: feature, feat, fix, refactor, docs, chore, ci, test, style, perf, security"
+exit 1

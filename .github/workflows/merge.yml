@@ -355,63 +355,55 @@ jobs:
         id: changelog
         if: steps.bump.outputs.type != 'none'
         uses: actions/github-script@v7
-        env:
-          PR_TITLE: ${{ steps.pr-info.outputs.title }}
-          PR_BODY: ${{ steps.pr-info.outputs.body }}
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const fs = require('fs');
             const prNumber = ${{ steps.parse.outputs.pr-number }};
             const skipVersion = '${{ steps.version.outputs.skip }}' === 'true';
             const newVersion = skipVersion ? null : '${{ steps.version.outputs.new }}';
-            const title = process.env.PR_TITLE;
-            const body = process.env.PR_BODY;
             const changelogFile = '${{ inputs.changelog-file }}';
             const repoUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
             const prLink = `[#${prNumber}](${repoUrl}/pull/${prNumber})`;
 
-            // Determine CHANGELOG section from PR title type prefix
-            const typeMatch = title.match(/^(\w+)(?:\(.*?\))?:\s*(.+)$/);
-            let section = '### Changed'; // default
-            let description = title;
+            // ── Allow list: only these commit types produce CHANGELOG entries ──
+            const sectionMap = {
+              'feat': '### Added',
+              'fix': '### Fixed',
+              'refactor': '### Changed',
+              'perf': '### Changed',
+              'security': '### Security'
+            };
 
-            if (typeMatch) {
-              const type = typeMatch[1].toLowerCase();
-              description = typeMatch[2].trim();
-              // Capitalize first letter
-              description = description.charAt(0).toUpperCase() + description.slice(1);
+            // ── Parse PR commits into per-section entries ──
+            const { data: commits } = await github.rest.pulls.listCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
 
-              const sectionMap = {
-                'feat': '### Added',
-                'fix': '### Fixed',
-                'refactor': '### Changed',
-                'perf': '### Changed',
-                'security': '### Security'
-              };
-              section = sectionMap[type] || '### Changed';
+            const sectionEntries = new Map();
+
+            for (const c of commits) {
+              const msg = c.commit.message.split('\n')[0];
+              const match = msg.match(/^(\w+)(?:\(.*?\))?:\s*(.+)$/);
+              if (!match) continue;
+              const sec = sectionMap[match[1].toLowerCase()];
+              if (!sec) continue;
+              const desc = match[2].trim();
+              if (!sectionEntries.has(sec)) sectionEntries.set(sec, []);
+              sectionEntries.get(sec).push(desc.charAt(0).toUpperCase() + desc.slice(1));
             }
 
-            // Check for ## Summary section with bullet points in PR body
-            let entries = [];
-            const summaryMatch = body.match(/## Summary\s*\n([\s\S]*?)(?=\n## |\n---|\s*$)/i);
-            if (summaryMatch) {
-              const bullets = summaryMatch[1]
-                .split('\n')
-                .map(line => line.trim())
-                .filter(line => line.startsWith('- ') || line.startsWith('* '))
-                .map(line => line.replace(/^[-*]\s*/, ''));
-
-              if (bullets.length > 0) {
-                entries = bullets;
-              }
+            // ── No changelog-eligible commits → skip CHANGELOG and version bump ──
+            if (sectionEntries.size === 0) {
+              core.info('No changelog-eligible commits found — skipping CHANGELOG and version bump');
+              core.setOutput('entry', '');
+              core.setOutput('skip', 'true');
+              return;
             }
 
-            // Fall back to PR title if no summary bullets
-            if (entries.length === 0) {
-              entries = [description];
-            }
-
-            const entryLines = entries.map(e => `- ${e} (${prLink})`).join('\n');
+            const formatEntries = (bullets) => bullets.map(e => `- ${e} (${prLink})`).join('\n');
 
             // Check if CHANGELOG exists
             if (!fs.existsSync(changelogFile)) {
@@ -427,7 +419,10 @@ jobs:
             if (newVersion) {
               // ── Versioned entry: create a new dated section ──
               const today = new Date().toISOString().split('T')[0];
-              const newSection = `## [${newVersion}] - ${today}\n\n${section}\n\n${entryLines}`;
+              const sectionBlocks = [...sectionEntries.entries()]
+                .map(([sec, bullets]) => `${sec}\n\n${formatEntries(bullets)}`)
+                .join('\n\n');
+              const newSection = `## [${newVersion}] - ${today}\n\n${sectionBlocks}`;
 
               const headerEnd = changelog.search(/\n## /);
               if (headerEnd === -1) {
@@ -441,56 +436,65 @@ jobs:
             } else {
               // ── No version file: append to [Unreleased] section ──
               const unreleasedRegex = /## \[Unreleased\]\s*\n([\s\S]*?)(?=\n## \[|$)/;
-              const unreleasedMatch = changelog.match(unreleasedRegex);
 
-              if (unreleasedMatch) {
-                const existingContent = unreleasedMatch[1];
+              for (const [section, bullets] of sectionEntries) {
+                const entryLines = formatEntries(bullets);
+                const unreleasedMatch = changelog.match(unreleasedRegex);
 
-                // Check if the target subsection already exists
-                const subsectionRegex = new RegExp(`(${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\n([\\s\\S]*?)(?=\\n### |$)`);
-                const subsectionMatch = existingContent.match(subsectionRegex);
+                if (unreleasedMatch) {
+                  const existingContent = unreleasedMatch[1];
 
-                if (subsectionMatch) {
-                  // Append entries to existing subsection
-                  const existingEntries = subsectionMatch[2].trimEnd();
-                  const updatedSubsection = `${subsectionMatch[1]}\n${existingEntries}\n${entryLines}`;
-                  const updatedUnreleased = existingContent.replace(
-                    subsectionMatch[0],
-                    updatedSubsection
+                  // Check if the target subsection already exists
+                  const subsectionRegex = new RegExp(
+                    `(${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\n([\\s\\S]*?)(?=\\n### |$)`
                   );
-                  changelog = changelog.replace(unreleasedMatch[0], `## [Unreleased]\n${updatedUnreleased}`);
+                  const subsectionMatch = existingContent.match(subsectionRegex);
+
+                  if (subsectionMatch) {
+                    // Append entries to existing subsection
+                    const existingEntries = subsectionMatch[2].trimEnd();
+                    const updatedSubsection = `${subsectionMatch[1]}\n${existingEntries}\n${entryLines}`;
+                    const updatedUnreleased = existingContent.replace(
+                      subsectionMatch[0],
+                      updatedSubsection
+                    );
+                    changelog = changelog.replace(unreleasedMatch[0], `## [Unreleased]\n${updatedUnreleased}`);
+                  } else {
+                    // Add new subsection at end of [Unreleased]
+                    const updatedUnreleased = `${existingContent.trimEnd()}\n\n${section}\n\n${entryLines}\n`;
+                    changelog = changelog.replace(unreleasedMatch[0], `## [Unreleased]\n${updatedUnreleased}`);
+                  }
                 } else {
-                  // Add new subsection at end of [Unreleased]
-                  const updatedUnreleased = `${existingContent.trimEnd()}\n\n${section}\n\n${entryLines}\n`;
-                  changelog = changelog.replace(unreleasedMatch[0], `## [Unreleased]\n${updatedUnreleased}`);
-                }
-              } else {
-                // No [Unreleased] section — create one
-                const newSection = `## [Unreleased]\n\n${section}\n\n${entryLines}`;
-                const headerEnd = changelog.search(/\n## /);
-                if (headerEnd === -1) {
-                  changelog = changelog.trimEnd() + '\n\n' + newSection + '\n';
-                } else {
-                  changelog = changelog.slice(0, headerEnd) + '\n' + newSection + '\n' + changelog.slice(headerEnd);
+                  // No [Unreleased] section — create one
+                  const newSec = `## [Unreleased]\n\n${section}\n\n${entryLines}`;
+                  const headerEnd = changelog.search(/\n## /);
+                  if (headerEnd === -1) {
+                    changelog = changelog.trimEnd() + '\n\n' + newSec + '\n';
+                  } else {
+                    changelog = changelog.slice(0, headerEnd) + '\n' + newSec + '\n' + changelog.slice(headerEnd);
+                  }
                 }
               }
 
+              const entryOutput = [...sectionEntries.entries()]
+                .map(([sec, bullets]) => `${sec}\n${formatEntries(bullets)}`)
+                .join('\n\n');
               core.info('CHANGELOG updated with [Unreleased] entry');
-              core.setOutput('entry', `${section}\n${entryLines}`);
+              core.setOutput('entry', entryOutput);
             }
 
             fs.writeFileSync(changelogFile, changelog);
 
       # ── Step 10: Update version file ───────────────────────────────
       - name: Update version file (JSON)
-        if: steps.bump.outputs.type != 'none' && steps.version.outputs.skip != 'true' && endsWith(inputs.version-file, '.json')
+        if: steps.bump.outputs.type != 'none' && steps.changelog.outputs.skip != 'true' && steps.version.outputs.skip != 'true' && endsWith(inputs.version-file, '.json')
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
           VERSION_FILE: ${{ inputs.version-file }}
         run: npm version "$NEW_VERSION" --no-git-tag-version --package-lock=false --prefix "$(dirname "$VERSION_FILE")"
 
       - name: Update version file (XML)
-        if: steps.bump.outputs.type != 'none' && steps.version.outputs.skip != 'true' && !endsWith(inputs.version-file, '.json')
+        if: steps.bump.outputs.type != 'none' && steps.changelog.outputs.skip != 'true' && steps.version.outputs.skip != 'true' && !endsWith(inputs.version-file, '.json')
         uses: actions/github-script@v7
         with:
           script: |
@@ -674,6 +678,8 @@ jobs:
 
             if (bumpType === 'none') {
               summary += '\n\n**Version:** No bump (non-code change).';
+            } else if (skipChangelog) {
+              summary += '\n\n**Version:** No bump (no changelog-eligible commits).';
             } else if (skipVersion) {
               summary += '\n\n**Version:** No version file — CHANGELOG updated only.';
             } else {
@@ -683,7 +689,7 @@ jobs:
             }
 
             if (skipChangelog) {
-              summary += '\n**CHANGELOG:** Skipped (no CHANGELOG file).';
+              summary += '\n**CHANGELOG:** Skipped (no changelog-eligible commits or no CHANGELOG file).';
             }
 
             await github.rest.issues.createComment({
