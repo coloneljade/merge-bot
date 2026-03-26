@@ -100,27 +100,39 @@ Branches not in the map (e.g., `docs/`, `chore/`, `ci/`, `test/`, `style/`) get 
 
 ## CHANGELOG Generation
 
-When a version file exists, the bot creates **versioned sections**:
+The bot reads each PR commit's conventional commit prefix and routes entries to the appropriate CHANGELOG section:
 
-```markdown
-## [1.2.0] - 2026-02-23
-
-### Added
-- Description from PR title (#5)
-```
-
-When no version file exists, entries are appended to `## [Unreleased]` instead.
-
-PR title format `type(scope): description` maps to sections:
-
-| Type | Section |
-|------|---------|
+| Commit Type | CHANGELOG Section |
+|-------------|-------------------|
 | `feat` | `### Added` |
 | `fix` | `### Fixed` |
 | `refactor`, `perf` | `### Changed` |
 | `security` | `### Security` |
+| All others | Not in CHANGELOG |
 
-If the PR body contains a `## Summary` section with bullet points, those are used as entries instead of the title.
+Non-changelog types (`docs`, `test`, `chore`, `style`, `ci`, `build`) are excluded — only user-facing changes appear in the CHANGELOG.
+
+When no commits have changelog-eligible prefixes, the bot skips both the CHANGELOG update and the version bump.
+
+When a version file exists, the bot creates **versioned sections**:
+
+```markdown
+## [1.3.0] - 2026-03-25
+
+### Added
+
+- Add subpath exports for components (#18)
+
+### Fixed
+
+- Resolve alias leaks in type declarations (#18)
+
+### Changed
+
+- Replace vite-plugin-dts with tsc + tsc-alias (#18)
+```
+
+When no version file exists, entries are appended to `## [Unreleased]` instead.
 
 ## Readiness Check
 
