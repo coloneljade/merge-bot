@@ -251,6 +251,18 @@ with:
 
 For non-JSON files (default), the bot uses the `version-xpath` input as the XML element name. This is the original behavior for `.NET` repos using `Directory.Build.props`.
 
+## Development
+
+After cloning, configure git to use the repo's commit hooks:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This enables:
+- **commit-msg** — validates conventional commit format at creation time
+- **pre-push** — validates branch naming and all outgoing commit messages
+
 ## Versioning
 
 The `@v1` tag always points to the latest commit on `main`. Consumers referencing `@v1` automatically get updates without changing their workflow files.
