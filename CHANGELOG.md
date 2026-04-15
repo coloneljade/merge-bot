@@ -33,3 +33,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add `--major` to the commands table in README ([#16](https://github.com/coloneljade/merge-bot/pull/16))
 - Update Version Behavior section to accurately describe that major bumps are manual-flag-triggered, not unsupported ([#16](https://github.com/coloneljade/merge-bot/pull/16))
 - Match breaking change marker (!) in commit regex ([#21](https://github.com/coloneljade/merge-bot/pull/21))
+- Allow readiness check to pass for dependabot PRs ([#23](https://github.com/coloneljade/merge-bot/pull/23))
