@@ -11,11 +11,11 @@ jobs:
   update-tag:
     runs-on: ubuntu-latest
     steps:
-      - name: Update v1 tag
+      - name: Update v2 tag
         uses: actions/github-script@v9
         with:
           script: |
-            const tag = 'v1';
+            const tag = 'v2';
             const ref = `tags/${tag}`;
             const sha = context.sha;
 

@@ -24,7 +24,7 @@ on:
         type: string
         required: true
     secrets:
-      app-id:
+      client-id:
         required: true
       private-key:
         required: true
@@ -44,7 +44,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.app-id }}
+          client-id: ${{ secrets.client-id }}
           private-key: ${{ secrets.private-key }}
 
       # ── Step 2: Get PR details ──────────────────────────────────────

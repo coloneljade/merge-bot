@@ -19,5 +19,5 @@ jobs:
     if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/merge')
     uses: ./.github/workflows/merge.yml
     secrets:
-      app-id: ${{ secrets.MERGE_APP_ID }}
+      client-id: ${{ secrets.MERGE_CLIENT_ID }}
       private-key: ${{ secrets.MERGE_APP_PRIVATE_KEY }}
