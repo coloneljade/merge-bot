@@ -30,11 +30,11 @@ concurrency:
 jobs:
   merge:
     if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/merge')
-    uses: coloneljade/merge-bot/.github/workflows/merge.yml@v1
+    uses: coloneljade/merge-bot/.github/workflows/merge.yml@v2
     with:
       bump-map: '{"feature":"minor","feat":"minor","fix":"patch"}'
     secrets:
-      app-id: ${{ secrets.MERGE_APP_ID }}
+      client-id: ${{ secrets.MERGE_CLIENT_ID }}
       private-key: ${{ secrets.MERGE_APP_PRIVATE_KEY }}
 ```
 
@@ -64,7 +64,7 @@ Flags can be combined: `/merge --patch --no-squash`
 
 | Secret | Description |
 |--------|-------------|
-| `app-id` | GitHub App ID for `auldrant-merge-bot` |
+| `client-id` | GitHub App Client ID for `auldrant-merge-bot` |
 | `private-key` | Private key (.pem) for the GitHub App |
 
 Set these as repository secrets in each consuming repo under Settings > Secrets and variables > Actions.
@@ -151,12 +151,12 @@ permissions:
   checks: read
 jobs:
   readiness:
-    uses: coloneljade/merge-bot/.github/workflows/readiness.yml@v1
+    uses: coloneljade/merge-bot/.github/workflows/readiness.yml@v2
     with:
       pr-number: ${{ github.event.pull_request.number }}
       pr-sha: ${{ github.event.pull_request.head.sha }}
     secrets:
-      app-id: ${{ secrets.MERGE_APP_ID }}
+      client-id: ${{ secrets.MERGE_CLIENT_ID }}
       private-key: ${{ secrets.MERGE_APP_PRIVATE_KEY }}
 ```
 
@@ -194,7 +194,7 @@ Go to **github.com > Settings > Developer settings > GitHub Apps > New GitHub Ap
 No user/org permissions needed. Subscribe to no events.
 
 After creation:
-1. Note the **App ID** from the app settings page
+1. Note the **Client ID** from the app settings page (under **About** — distinct from the **App ID**)
 2. Under **Private keys**, generate a key and download the `.pem` file
 
 ### 2. Install the App
@@ -207,7 +207,7 @@ In each consuming repo: **Settings > Secrets and variables > Actions > New repos
 
 | Secret name | Value |
 |-------------|-------|
-| `MERGE_APP_ID` | The App ID number |
+| `MERGE_CLIENT_ID` | The GitHub App Client ID (e.g. `Iv23li…`) |
 | `MERGE_APP_PRIVATE_KEY` | Full contents of the `.pem` file |
 
 ### 4. Create Branch Ruleset

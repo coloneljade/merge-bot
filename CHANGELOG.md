@@ -35,3 +35,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Match breaking change marker (!) in commit regex ([#21](https://github.com/coloneljade/merge-bot/pull/21))
 - Allow readiness check to pass for dependabot PRs ([#23](https://github.com/coloneljade/merge-bot/pull/23))
 - Bump actions to Node.js 24 compatible versions ([#24](https://github.com/coloneljade/merge-bot/pull/24))
+- Replace deprecated app-id input with client-id ([#27](https://github.com/coloneljade/merge-bot/pull/27))
