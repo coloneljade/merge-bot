@@ -87,7 +87,7 @@ jobs:
       - name: Check version file
         id: version
         if: github.actor != 'dependabot[bot]' && steps.bump.outputs.type != 'none'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           ref: ${{ steps.pr-info.outputs.base }}
