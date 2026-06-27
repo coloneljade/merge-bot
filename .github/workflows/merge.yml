@@ -232,7 +232,7 @@ jobs:
 
       # ── Step 6: Checkout PR branch ─────────────────────────────────
       - name: Checkout PR branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           ref: ${{ steps.pr-info.outputs.branch }}
